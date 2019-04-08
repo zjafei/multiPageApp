@@ -73,6 +73,18 @@ module.exports = (env, argv) => {
       path: path.join(__dirname, 'dist'),
       filename: 'js/[name].min.js',
     },
+    stats: 'errors-only',
+    devServer: {
+      contentBase: path.join(__dirname, 'dist'),
+      compress: true,
+      port: 8848,
+      clientLogLevel: 'none',
+      overlay: {
+        warnings: true,
+        errors: true,
+      },
+      stats: 'errors-only',
+    },
     module: {
       rules: [
         {
