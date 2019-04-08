@@ -1,0 +1,177 @@
+#!/usr/bin/env node
+const shell = require('shelljs');
+const moment = require('moment');
+const fs = require('fs');
+const jData = require('./package.json');
+
+// 获取版本信息数组
+function getVersionList(version) {
+  const versionArr = version.split('.');
+  for (let i = 0; i < 3; i++) {
+    const tempNum = Number(versionArr[i]);
+    versionArr[i] = Number.isNaN(tempNum) ? 0 : tempNum;
+  }
+  return versionArr;
+}
+
+// 比价版本的大小
+function bigVersion(versionPer, versionNext) {
+  let isEnd = false;
+  const versionPerArr = getVersionList(versionPer);
+  const versionNextArr = getVersionList(versionNext);
+  let versionArr = versionPerArr.length > versionNextArr.length ? versionPerArr : versionNextArr;
+
+  versionArr.forEach((row, index) => {
+    if (isEnd === false) {
+      if (versionNextArr[index] > versionPerArr[index]) {
+        isEnd = true;
+        versionArr = versionNextArr;
+      }
+      if (row < versionPerArr[index]) {
+        isEnd = true;
+        versionArr = versionPerArr;
+      }
+    }
+  });
+
+  return versionArr.join('.');
+}
+
+// 根据分支类型处理版本号version
+function handleType(oldVersion, type) {
+  const oldVersionArr = getVersionList(oldVersion);
+  // 版本号第一位 如：1.2.3 则为 1
+  const firstNum = +oldVersionArr[0];
+  // 版本号第二位 如：1.2.3 则为 2
+  let secondNum = +oldVersionArr[1];
+  // 版本号第三位 如：1.2.3 则为 3
+  let thirdNum = +oldVersionArr[2];
+
+  switch (type) {
+    case 'release':
+      // release分支的处理逻辑
+      secondNum += 1;
+      break;
+    case 'hotfix':
+      // hotfix分支的处理逻辑
+      thirdNum += 1;
+      break;
+    default:
+      break;
+  }
+
+  return `${firstNum}.${secondNum}.${thirdNum}`;
+}
+
+function command(cmd) {
+  if (shell.exec(cmd).code !== 0) {
+    shell.echo(`Error: ${cmd}`);
+    shell.exit(1);
+  }
+}
+
+/** 命令行的所有参数 */
+const options = {};
+const argv = process.argv.slice(2);
+argv.forEach(row => {
+  const keyVal = row.split('=');
+  const [key, value] = keyVal;
+  options[key] = value || null;
+});
+
+const oldVersion = jData.version || '0.0.0';
+
+const splitLine = '==================================';
+const now = moment().format('YYYY-MM-DD_HH-mm-ss');
+
+function analyze() {
+  shell.echo(splitLine);
+  shell.echo('analyze:');
+  shell.echo(splitLine);
+  command('npm run analyze');
+}
+
+function testDeploy(version) {
+  shell.echo(splitLine);
+  shell.echo('Testing deploy:');
+  shell.echo(splitLine);
+  command('npm run test');
+  // command(`cp ./dist/${version}/index.html ./dist/`);
+  // command(`rm ./dist/${version}/index.html`);
+  shell.echo('copy to test server');
+  shell.echo(splitLine);
+// /var/dev_qingtong/bin/admin-front
+// /var/dev_qingtong/bin/static
+  command(`scp -r ./dist/${version}/index.html  dev@47.102.138.254:/var/dev_qingtong/bin/admin-front/`);
+  command(`rm ./dist/${version}/index.html`);
+  command('scp -r ./dist/*  dev@47.102.138.254:/var/dev_qingtong/bin/static');
+  command('rm ./dist -rf');
+  shell.echo('Deployed!');
+}
+
+function testZipDeploy() {
+  const zipName = `helmet_test_${now}.zip`;
+
+  shell.echo(splitLine);
+  shell.echo('Testing zip deploy:');
+  shell.echo(splitLine);
+  command('npm run test');
+  shell.echo(`zip to ${zipName}`);
+  shell.echo(splitLine);
+  command(`zip -m -r -q ${zipName} ./dist`);
+  shell.echo('Deployed!');
+}
+
+function productZipDeploy(version) {
+  const zipName = `helmet_production_v${version}_${now}.zip`;
+
+  shell.echo(splitLine);
+  shell.echo('Production zip deploy:');
+  shell.echo(splitLine);
+  command('npm run build');
+  shell.echo(`zip to ${zipName}`);
+  shell.echo(splitLine);
+  command(`zip -m -r -q ${zipName} ./dist`);
+  shell.echo('Deployed!');
+}
+
+function updateVersion() {
+  let version = bigVersion(oldVersion, options.tag || '0.0.0'); // 强制新版本
+  const type = options.type || 'release'; // 提交类型
+
+  if (version === oldVersion) {
+    version = handleType(oldVersion, type);
+  }
+  jData.version = version;
+  const message = options.message || `v${version} for ${type}`;
+
+  fs.writeFileSync('package.json', JSON.stringify(jData, null, 2));
+  shell.echo(`项目版本更新为：${version}`);
+  command('git add .');
+  command(`git commit -m 'v${version} create at ${now} ${message}'`);
+  command(`git tag -a v${version} -m '${message}'`);
+  command(`git push team v${version}`);
+  // productZipDeploy(version);
+}
+
+if (options.t !== undefined) {
+  testDeploy(oldVersion);
+  return;
+}
+
+if (options.tz !== undefined) {
+  testZipDeploy(oldVersion);
+  return;
+}
+
+if (options.pz !== undefined) {
+  productZipDeploy(oldVersion);
+  return;
+}
+
+if (options.a !== undefined) {
+  analyze();
+  return;
+}
+
+updateVersion();
